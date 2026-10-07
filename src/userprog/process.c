@@ -38,8 +38,8 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   char name_copy[16];
-  char name_buffer[PGSIZE];
-  char *save_ptr;
+  size_t name_length = 0;
+  size_t name_start = 0;
   struct start_info *info;
   struct child_info *child;
   tid_t tid;
@@ -57,14 +57,23 @@ process_execute (const char *file_name)
       return TID_ERROR;
     }
   strlcpy (fn_copy, file_name, PGSIZE);
-  strlcpy (name_buffer, file_name, sizeof name_buffer);
-  if (strtok_r (name_buffer, " ", &save_ptr) == NULL)
+  while (fn_copy[name_start] == ' ')
+    name_start++;
+  if (fn_copy[name_start] == '\0')
     {
       palloc_free_page (fn_copy);
       free (info);
       free (child);
       return TID_ERROR;
     }
+  while (fn_copy[name_start + name_length] != '\0'
+         && fn_copy[name_start + name_length] != ' '
+         && name_length < sizeof name_copy - 1)
+    {
+      name_copy[name_length] = fn_copy[name_start + name_length];
+      name_length++;
+    }
+  name_copy[name_length] = '\0';
 
   sema_init (&child->load_sema, 0);
   sema_init (&child->wait_sema, 0);
@@ -78,7 +87,6 @@ process_execute (const char *file_name)
   info->child = child;
 
   /* Create a new thread to execute FILE_NAME. */
-  strlcpy (name_copy, name_buffer, sizeof name_copy);
   tid = thread_create (name_copy, PRI_DEFAULT, start_process, info);
   if (tid == TID_ERROR)
     {
@@ -91,7 +99,13 @@ process_execute (const char *file_name)
   child->tid = tid;
   sema_down (&child->load_sema);
   if (!child->load_success)
-    return TID_ERROR;
+    {
+      list_remove (&child->elem);
+      child->parent_alive = false;
+      if (!child->child_alive)
+        free (child);
+      return TID_ERROR;
+    }
   return tid;
 }
 
@@ -331,7 +345,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
-  char file_name_copy[PGSIZE];
+  char *file_name_copy;
   char *program;
   char *save_ptr;
   off_t file_ofs;
@@ -339,10 +353,16 @@ load (const char *file_name, void (**eip) (void), void **esp)
   bool fs_locked = false;
   int i;
 
-  strlcpy (file_name_copy, file_name, sizeof file_name_copy);
+  file_name_copy = palloc_get_page (0);
+  if (file_name_copy == NULL)
+    return false;
+  strlcpy (file_name_copy, file_name, PGSIZE);
   program = strtok_r (file_name_copy, " ", &save_ptr);
   if (program == NULL)
-    return false;
+    {
+      palloc_free_page (file_name_copy);
+      return false;
+    }
 
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
@@ -452,6 +472,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
     file_close (file);
   if (fs_locked)
     lock_release (&filesys_lock);
+  palloc_free_page (file_name_copy);
   return success;
 }
 
@@ -577,7 +598,7 @@ setup_stack (void **esp, const char *cmdline)
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
         {
-          char copy[PGSIZE];
+          char *copy = palloc_get_page (0);
           char *tokens[128];
           char *save_ptr;
           char *token;
@@ -585,7 +606,12 @@ setup_stack (void **esp, const char *cmdline)
           uintptr_t *argv;
           int i;
 
-          strlcpy (copy, cmdline, sizeof copy);
+          if (copy == NULL)
+            {
+              palloc_free_page (kpage);
+              return false;
+            }
+          strlcpy (copy, cmdline, PGSIZE);
           for (token = strtok_r (copy, " ", &save_ptr);
                token != NULL && argc < 128;
                token = strtok_r (NULL, " ", &save_ptr))
@@ -614,6 +640,7 @@ setup_stack (void **esp, const char *cmdline)
           *(int *) *esp = argc;
           *esp = (uint8_t *) *esp - sizeof (void *);
           *(void **) *esp = NULL;
+          palloc_free_page (copy);
         }
       else
         palloc_free_page (kpage);

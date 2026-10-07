@@ -199,6 +199,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
       list_pop_front (&sleep_list);
       thread_unblock (t);
     }
+  thread_check_preempt ();
   thread_tick ();
 }
 
