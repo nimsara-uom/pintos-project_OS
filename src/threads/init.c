@@ -71,7 +71,101 @@ static void locate_block_device (enum block_type, const char *name);
 #endif
 
 int pintos_init (void) NO_RETURN;
+static uint32_t
+hex_to_uint (const char *s)
+{
+  uint32_t val = 0;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+    s += 2;
+  for (; *s != '\0'; s++)
+    {
+      char c = *s;
+      int digit;
+      if (c >= '0' && c <= '9') digit = c - '0';
+      else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+      else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+      else break;
+      val = (val << 4) | digit;
+    }
+  return val;
+}
 
+void run_interactive_shell(void) {
+    char command[128]; 
+    int index = 0;
+    
+    printf("CS2042> "); 
+    
+    while (true) {
+        uint8_t c = input_getc(); 
+        
+        // 1. Handle Execution (Enter key)
+        if (c == '\r' || c == '\n') {
+            printf("\n");
+            command[index] = '\0'; 
+            
+            // --- ADVANCED PARSING STARTS HERE ---
+            char *save_ptr;
+            // Extract the first word as the command
+            char *cmd_name = strtok_r(command, " ", &save_ptr);
+
+            if (cmd_name != NULL) {
+                // Now we compare cmd_name instead of the whole command string
+                if (strcmp(cmd_name, "exit") == 0) {
+                    printf("Exiting interactive shell... Bye!\n");
+                    break;
+                } 
+                else if (strcmp(cmd_name, "clear") == 0) {
+                    printf("\033[2J\033[H"); // ANSI escape codes to clear screen
+                } 
+                else if (strcmp(cmd_name, "peek") == 0) {
+                    char *addr_str = strtok_r(NULL, " ", &save_ptr);
+                    if (addr_str != NULL) {
+                        uint32_t *ptr = (uint32_t *) hex_to_uint(addr_str);
+                        printf("Value at %p: 0x%08x\n", ptr, *ptr);
+                    } else {
+                        printf("Usage: peek <hex_address>\n");
+                    }
+                } 
+                else if (strcmp(cmd_name, "echo") == 0) {
+                    // Extract everything else left in the string
+                    char *text = strtok_r(NULL, "", &save_ptr); 
+                    if (text != NULL) {
+                        printf("%s\n", text);
+                    }
+                }
+                else if (strcmp(cmd_name, "whoami") == 0) {
+                    printf("Nimsara Kodithuwakku - KODDEX UI\n");
+                }
+                else if (strcmp(cmd_name, "shutdown") == 0) {
+                    shutdown_power_off();
+                }
+                // ... Add back your other commands (time, ram, thread, priority) here ...
+                
+                else {
+                    printf("Unknown command: %s\n", cmd_name);
+                }
+            }
+            // --- ADVANCED PARSING ENDS HERE ---
+            
+            // Reset for the next input
+            index = 0;
+            printf("CS2042> ");
+        } 
+        
+        // 2. Handle Backspace (Keep this exactly the same)
+        else if (c == '\b' && index > 0) {
+            index--;
+            printf("\b \b"); 
+        } 
+        
+        // 3. Handle standard characters (Keep this exactly the same)
+        else if (c >= 32 && c <= 126 && index < sizeof(command) - 1) {
+            command[index++] = c;
+            putchar(c);
+        }
+    }
+}
 /* Pintos main entry point. */
 int
 pintos_init (void)
@@ -134,6 +228,7 @@ pintos_init (void)
     run_actions (argv);
   } else {
     // TODO: no command line passed to kernel. Run interactively 
+    run_interactive_shell();
   }
 
   /* Finish up. */
