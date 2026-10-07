@@ -499,6 +499,13 @@ init_thread (struct thread *t, const char *name, int priority)
   t->base_priority = priority;
   t->nice = 0;
   t->recent_cpu = 0;
+  list_init (&t->children);
+  list_init (&t->file_descriptors);
+  t->next_fd = 2;
+  t->child_record = NULL;
+  t->exit_status = -1;
+  t->user_process = false;
+  t->executable = NULL;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
