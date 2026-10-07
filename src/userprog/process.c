@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -36,7 +37,8 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
-  char *name_copy;
+  char name_copy[16];
+  char name_buffer[PGSIZE];
   char *save_ptr;
   struct start_info *info;
   struct child_info *child;
@@ -55,8 +57,8 @@ process_execute (const char *file_name)
       return TID_ERROR;
     }
   strlcpy (fn_copy, file_name, PGSIZE);
-  name_copy = strtok_r (fn_copy, " ", &save_ptr);
-  if (name_copy == NULL)
+  strlcpy (name_buffer, file_name, sizeof name_buffer);
+  if (strtok_r (name_buffer, " ", &save_ptr) == NULL)
     {
       palloc_free_page (fn_copy);
       free (info);
@@ -76,6 +78,7 @@ process_execute (const char *file_name)
   info->child = child;
 
   /* Create a new thread to execute FILE_NAME. */
+  strlcpy (name_copy, name_buffer, sizeof name_copy);
   tid = thread_create (name_copy, PRI_DEFAULT, start_process, info);
   if (tid == TID_ERROR)
     {
@@ -178,6 +181,7 @@ process_exit (void)
 
   if (cur->user_process)
     {
+      printf ("%s: exit(%d)\n", thread_name (), cur->exit_status);
       while (!list_empty (&cur->children))
         {
           struct child_info *child =
@@ -200,13 +204,17 @@ process_exit (void)
           struct file_desc *fd =
             list_entry (list_pop_front (&cur->file_descriptors),
                         struct file_desc, elem);
+          lock_acquire (&filesys_lock);
           file_close (fd->file);
+          lock_release (&filesys_lock);
           free (fd);
         }
       if (cur->executable != NULL)
         {
+          lock_acquire (&filesys_lock);
           file_allow_write (cur->executable);
           file_close (cur->executable);
+          lock_release (&filesys_lock);
         }
     }
 
@@ -328,6 +336,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   char *save_ptr;
   off_t file_ofs;
   bool success = false;
+  bool fs_locked = false;
   int i;
 
   strlcpy (file_name_copy, file_name, sizeof file_name_copy);
@@ -342,6 +351,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  lock_acquire (&filesys_lock);
+  fs_locked = true;
   file = filesys_open (program);
   if (file == NULL) 
     {
@@ -439,6 +450,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
   else
     file_close (file);
+  if (fs_locked)
+    lock_release (&filesys_lock);
   return success;
 }
 
